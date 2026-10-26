@@ -54,14 +54,14 @@ export const CheckoutView: React.FC = () => {
   }
 
   // Handle Order Placement
-  const handlePlaceOrder = (e: React.FormEvent) => {
+  const handlePlaceOrder = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim() || !phone.trim() || !address.trim()) {
       alert('Vui lòng điền đầy đủ Họ tên, Số điện thoại và Địa chỉ giao hàng!');
       return;
     }
 
-    const order = createOrder({
+    const order = await createOrder({
       customerName: name.trim(),
       customerEmail: email.trim() || 'guest@tdshop.vn',
       customerPhone: phone.trim(),

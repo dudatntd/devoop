@@ -1,5 +1,6 @@
 export interface User {
   id: string;
+  _id?: string;
   username: string;
   email: string;
   full_name: string;
@@ -14,6 +15,7 @@ export interface User {
 
 export interface Category {
   id: string;
+  _id?: string;
   name: string;
   slug: string;
   iconName: string;
@@ -23,6 +25,7 @@ export interface Category {
 
 export interface Product {
   id: string;
+  _id?: string;
   name: string;
   slug: string;
   category_id: string;
@@ -43,6 +46,7 @@ export interface Product {
 
 export interface CartItem {
   id: string;
+  _id?: string;
   product_id: string;
   product: Product;
   quantity: number;
@@ -53,6 +57,7 @@ export type OrderStatus = 'pending' | 'confirmed' | 'shipping' | 'delivered' | '
 
 export interface OrderItem {
   id: string;
+  _id?: string;
   product_id: string;
   product_name: string;
   product_image: string;
@@ -62,6 +67,7 @@ export interface OrderItem {
 
 export interface Order {
   id: string;
+  _id?: string;
   order_code: string;
   user_id: string;
   user_name: string;
@@ -81,6 +87,7 @@ export interface Order {
 
 export interface Coupon {
   id: string;
+  _id?: string;
   code: string;
   discount_type: 'percent' | 'fixed';
   discount_value: number; // e.g. 10 for 10% or 50000 for 50k VND
@@ -93,6 +100,7 @@ export interface Coupon {
 
 export interface Review {
   id: string;
+  _id?: string;
   product_id: string;
   user_name: string;
   user_avatar?: string;

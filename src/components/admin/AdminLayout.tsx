@@ -24,6 +24,8 @@ import {
   TrendingUp,
   X,
   Code2,
+  Database,
+  RefreshCw,
 } from 'lucide-react';
 import { useStore } from '../../context/StoreContext';
 import { Product, Category, Order, User, Coupon, OrderStatus } from '../../types';
@@ -55,6 +57,10 @@ export const AdminLayout: React.FC = () => {
     showToast,
     login,
     setIsDjangoCodeModalOpen,
+    isMongoConnected,
+    isLoadingMongo,
+    reseedMongoDB,
+    refreshFromMongoDB,
   } = useStore();
 
   const [activeTab, setActiveTab] = useState<
@@ -305,7 +311,31 @@ export const AdminLayout: React.FC = () => {
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center flex-wrap gap-2.5">
+          {/* MongoDB Status Badge */}
+          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 text-xs font-medium border border-slate-700">
+            <span className={`w-2.5 h-2.5 rounded-full ${isMongoConnected ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
+            <Database className="w-3.5 h-3.5 text-slate-400" />
+            <span className="text-slate-300">
+              {isMongoConnected ? 'MongoDB Đã kết nối' : 'Đang đợi kết nối MongoDB...'}
+            </span>
+          </div>
+
+          {/* Re-seed MongoDB Database Button */}
+          <button
+            onClick={() => {
+              if (window.confirm('Bạn có chắc chắn muốn xoá toàn bộ dữ liệu data cũ và tạo lại database mới trong MongoDB?')) {
+                reseedMongoDB();
+              }
+            }}
+            disabled={isLoadingMongo}
+            className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs disabled:opacity-50"
+            title="Xoá toàn bộ data cũ và tạo lại database MongoDB mới"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${isLoadingMongo ? 'animate-spin' : ''}`} />
+            Khởi tạo lại Database MongoDB
+          </button>
+
           <button
             onClick={() => setCurrentView('home')}
             className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer"

@@ -12,6 +12,7 @@ import {
   Info,
   LogOut,
   ChevronDown,
+  Database,
 } from 'lucide-react';
 import { useStore, AppView } from '../context/StoreContext';
 
@@ -30,6 +31,7 @@ export const Navbar: React.FC = () => {
     setIsDjangoCodeModalOpen,
     setSelectedCategorySlug,
     categories,
+    isMongoConnected,
   } = useStore();
 
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
@@ -133,6 +135,20 @@ export const Navbar: React.FC = () => {
             >
               <Code2 className="w-5 h-5" />
             </button>
+
+            {/* MongoDB status indicator */}
+            <div
+              className={`hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold border ${
+                isMongoConnected
+                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                  : 'bg-amber-50 text-amber-700 border-amber-200'
+              }`}
+              title={isMongoConnected ? 'Đã kết nối MongoDB thành công' : 'Đang tìm kiếm server backend MongoDB'}
+            >
+              <span className={`w-2 h-2 rounded-full ${isMongoConnected ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}`} />
+              <Database className="w-3.5 h-3.5" />
+              <span>{isMongoConnected ? 'MongoDB' : 'Offline'}</span>
+            </div>
 
             {/* Admin quick toggle */}
             {currentUser?.is_admin && (

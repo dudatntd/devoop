@@ -17,6 +17,7 @@ import {
   INITIAL_ORDERS,
   INITIAL_REVIEWS,
 } from '../data/mockData';
+import { api } from '../services/api';
 
 export type AppView = 'home' | 'products' | 'categories' | 'about' | 'contact' | 'cart' | 'checkout' | 'admin' | 'product-detail';
 
@@ -35,6 +36,12 @@ interface StoreContextType {
   activeOrderId: string | null;
   setActiveOrderId: (id: string | null) => void;
 
+  // MongoDB Status & Controls
+  isMongoConnected: boolean;
+  isLoadingMongo: boolean;
+  refreshFromMongoDB: () => Promise<void>;
+  reseedMongoDB: () => Promise<void>;
+
   // Modals
   isAuthModalOpen: boolean;
   setIsAuthModalOpen: (open: boolean) => void;
@@ -49,16 +56,16 @@ interface StoreContextType {
   products: Product[];
   featuredProducts: Product[];
   newProducts: Product[];
-  addProduct: (product: Omit<Product, 'id' | 'created_at' | 'rating' | 'reviews_count'>) => void;
-  updateProduct: (id: string, updates: Partial<Product>) => void;
-  deleteProduct: (id: string) => void;
-  toggleProductStatus: (id: string) => void;
+  addProduct: (product: Omit<Product, 'id' | 'created_at' | 'rating' | 'reviews_count'>) => Promise<void>;
+  updateProduct: (id: string, updates: Partial<Product>) => Promise<void>;
+  deleteProduct: (id: string) => Promise<void>;
+  toggleProductStatus: (id: string) => Promise<void>;
 
   // Categories
   categories: Category[];
-  addCategory: (cat: Omit<Category, 'id'>) => void;
-  updateCategory: (id: string, updates: Partial<Category>) => void;
-  deleteCategory: (id: string) => void;
+  addCategory: (cat: Omit<Category, 'id'>) => Promise<void>;
+  updateCategory: (id: string, updates: Partial<Category>) => Promise<void>;
+  deleteCategory: (id: string) => Promise<void>;
 
   // Cart
   cart: CartItem[];
@@ -76,9 +83,9 @@ interface StoreContextType {
   appliedCoupon: Coupon | null;
   applyCoupon: (code: string) => { success: boolean; message: string };
   removeCoupon: () => void;
-  addCoupon: (coupon: Omit<Coupon, 'id' | 'used_count'>) => void;
-  updateCoupon: (id: string, updates: Partial<Coupon>) => void;
-  deleteCoupon: (id: string) => void;
+  addCoupon: (coupon: Omit<Coupon, 'id' | 'used_count'>) => Promise<void>;
+  updateCoupon: (id: string, updates: Partial<Coupon>) => Promise<void>;
+  deleteCoupon: (id: string) => Promise<void>;
 
   // Orders
   orders: Order[];
@@ -89,23 +96,23 @@ interface StoreContextType {
     shippingAddress: string;
     paymentMethod: 'cod' | 'banking' | 'vnpay';
     note?: string;
-  }) => Order;
-  updateOrderStatus: (orderId: string, status: OrderStatus) => void;
-  deleteOrder: (orderId: string) => void;
+  }) => Promise<Order>;
+  updateOrderStatus: (orderId: string, status: OrderStatus) => Promise<void>;
+  deleteOrder: (orderId: string) => Promise<void>;
 
   // Users & Auth
   users: User[];
   currentUser: User | null;
-  login: (email: string, pass: string) => { success: boolean; message: string };
-  register: (userData: { full_name: string; email: string; phone: string; password?: string }) => { success: boolean; message: string };
+  login: (email: string, pass: string) => Promise<{ success: boolean; message: string }>;
+  register: (userData: { full_name: string; email: string; phone: string; password?: string }) => Promise<{ success: boolean; message: string }>;
   logout: () => void;
-  updateProfile: (updates: Partial<User>) => { success: boolean; message: string };
-  toggleUserLock: (userId: string) => void;
-  deleteUser: (userId: string) => void;
+  updateProfile: (updates: Partial<User>) => Promise<{ success: boolean; message: string }>;
+  toggleUserLock: (userId: string) => Promise<void>;
+  deleteUser: (userId: string) => Promise<void>;
 
   // Reviews
   reviews: Review[];
-  addReview: (productId: string, rating: number, comment: string) => void;
+  addReview: (productId: string, rating: number, comment: string) => Promise<void>;
 
   // Notification Toast
   notification: { message: string; type: 'success' | 'error' | 'info' } | null;
@@ -116,10 +123,10 @@ interface StoreContextType {
 const StoreContext = createContext<StoreContextType | undefined>(undefined);
 
 export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  // LocalStorage Helper
+  // LocalStorage Helper (v2 format for MongoDB synced state)
   const loadLocal = <T,>(key: string, defaultVal: T): T => {
     try {
-      const saved = localStorage.getItem(`tdshop_${key}`);
+      const saved = localStorage.getItem(`tdshop_v2_${key}`);
       return saved ? JSON.parse(saved) : defaultVal;
     } catch {
       return defaultVal;
@@ -128,7 +135,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const saveLocal = <T,>(key: string, val: T) => {
     try {
-      localStorage.setItem(`tdshop_${key}`, JSON.stringify(val));
+      localStorage.setItem(`tdshop_v2_${key}`, JSON.stringify(val));
     } catch {
       // ignore
     }
@@ -142,7 +149,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [orders, setOrders] = useState<Order[]>(() => loadLocal('orders', INITIAL_ORDERS));
   const [reviews, setReviews] = useState<Review[]>(() => loadLocal('reviews', INITIAL_REVIEWS));
   const [cart, setCart] = useState<CartItem[]>(() => loadLocal('cart', []));
-  const [currentUser, setCurrentUser] = useState<User | null>(() => loadLocal('current_user', INITIAL_USERS[0])); // Default login as admin for smooth preview
+  const [currentUser, setCurrentUser] = useState<User | null>(() => loadLocal('current_user', INITIAL_USERS[0]));
 
   const [appliedCoupon, setAppliedCoupon] = useState<Coupon | null>(null);
   const [currentView, setCurrentView] = useState<AppView>('home');
@@ -151,6 +158,10 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [activeOrderId, setActiveOrderId] = useState<string | null>(null);
+
+  // MongoDB Connection State
+  const [isMongoConnected, setIsMongoConnected] = useState<boolean>(false);
+  const [isLoadingMongo, setIsLoadingMongo] = useState<boolean>(false);
 
   const featuredProducts = products.filter((p) => p.is_featured && p.is_active);
   const newProducts = products.filter((p) => p.is_new && p.is_active);
@@ -164,16 +175,6 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   // Notification Toast
   const [notification, setNotification] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
 
-  // Sync with LocalStorage
-  useEffect(() => saveLocal('products', products), [products]);
-  useEffect(() => saveLocal('categories', categories), [categories]);
-  useEffect(() => saveLocal('coupons', coupons), [coupons]);
-  useEffect(() => saveLocal('users', users), [users]);
-  useEffect(() => saveLocal('orders', orders), [orders]);
-  useEffect(() => saveLocal('reviews', reviews), [reviews]);
-  useEffect(() => saveLocal('cart', cart), [cart]);
-  useEffect(() => saveLocal('current_user', currentUser), [currentUser]);
-
   const showToast = (message: string, type: 'success' | 'error' | 'info' = 'success') => {
     setNotification({ message, type });
     setTimeout(() => {
@@ -184,6 +185,65 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const formatCurrency = (amount: number): string => {
     return new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(amount);
   };
+
+  // Sync with MongoDB function
+  const refreshFromMongoDB = async () => {
+    try {
+      setIsLoadingMongo(true);
+      const health = await api.checkHealth();
+      if (health.connected) {
+        setIsMongoConnected(true);
+        const [cats, prods, ords, coups, usrs, revs] = await Promise.all([
+          api.getCategories().catch(() => INITIAL_CATEGORIES),
+          api.getProducts().catch(() => INITIAL_PRODUCTS),
+          api.getOrders().catch(() => INITIAL_ORDERS),
+          api.getCoupons().catch(() => INITIAL_COUPONS),
+          api.getUsers().catch(() => INITIAL_USERS),
+          api.getReviews().catch(() => INITIAL_REVIEWS),
+        ]);
+
+        if (cats && cats.length > 0) setCategories(cats);
+        if (prods && prods.length > 0) setProducts(prods);
+        if (ords) setOrders(ords);
+        if (coups && coups.length > 0) setCoupons(coups);
+        if (usrs && usrs.length > 0) setUsers(usrs);
+        if (revs) setReviews(revs);
+      }
+    } catch {
+      setIsMongoConnected(false);
+    } finally {
+      setIsLoadingMongo(false);
+    }
+  };
+
+  // Reseed MongoDB function
+  const reseedMongoDB = async () => {
+    try {
+      showToast('Đang kết nối MongoDB để xoá data cũ và khởi tạo database mới...', 'info');
+      const res = await api.seedDatabase();
+      if (res.success) {
+        await refreshFromMongoDB();
+        showToast('✓ Đã khởi tạo lại toàn bộ Database MongoDB mới thành công!', 'success');
+      }
+    } catch (err: any) {
+      showToast(err.message || 'Lỗi khi khởi tạo database MongoDB', 'error');
+    }
+  };
+
+  // Auto connect on mount
+  useEffect(() => {
+    refreshFromMongoDB();
+  }, []);
+
+  // Sync with LocalStorage backup
+  useEffect(() => saveLocal('products', products), [products]);
+  useEffect(() => saveLocal('categories', categories), [categories]);
+  useEffect(() => saveLocal('coupons', coupons), [coupons]);
+  useEffect(() => saveLocal('users', users), [users]);
+  useEffect(() => saveLocal('orders', orders), [orders]);
+  useEffect(() => saveLocal('reviews', reviews), [reviews]);
+  useEffect(() => saveLocal('cart', cart), [cart]);
+  useEffect(() => saveLocal('current_user', currentUser), [currentUser]);
 
   // Cart Calculations
   const cartCount = cart.reduce((total, item) => total + item.quantity, 0);
@@ -199,22 +259,17 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     } else {
       discountAmount = appliedCoupon.discount_value;
     }
-    if (discountAmount > cartSubtotal) discountAmount = cartSubtotal;
   }
   const cartTotal = Math.max(0, cartSubtotal - discountAmount);
 
-  // Cart Handlers
-  const addToCart = (product: Product, quantity = 1, variant?: string) => {
-    if (product.stock <= 0) {
-      showToast('Sản phẩm tạm thời hết hàng!', 'error');
-      return;
-    }
+  // Cart Actions
+  const addToCart = (product: Product, quantity: number = 1, variant?: string) => {
     setCart((prev) => {
       const existing = prev.find((item) => item.product_id === product.id && item.selected_variant === variant);
       if (existing) {
         const nextQty = existing.quantity + quantity;
         if (nextQty > product.stock) {
-          showToast(`Chỉ còn ${product.stock} sản phẩm trong kho!`, 'error');
+          showToast(`Chỉ còn tối đa ${product.stock} sản phẩm trong kho!`, 'error');
           return prev;
         }
         return prev.map((item) => (item.id === existing.id ? { ...item, quantity: nextQty } : item));
@@ -283,7 +338,17 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     showToast('Đã hủy mã giảm giá', 'info');
   };
 
-  const addCoupon = (couponData: Omit<Coupon, 'id' | 'used_count'>) => {
+  const addCoupon = async (couponData: Omit<Coupon, 'id' | 'used_count'>) => {
+    if (isMongoConnected) {
+      try {
+        const created = await api.createCoupon(couponData);
+        setCoupons((prev) => [created, ...prev]);
+        showToast(`Đã lưu mã giảm giá "${created.code}" vào MongoDB!`, 'success');
+        return;
+      } catch (err: any) {
+        showToast(err.message, 'error');
+      }
+    }
     const newCoupon: Coupon = {
       ...couponData,
       id: `coup-${Date.now()}`,
@@ -293,18 +358,45 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     showToast(`Đã tạo mã giảm giá "${newCoupon.code}"`, 'success');
   };
 
-  const updateCoupon = (id: string, updates: Partial<Coupon>) => {
+  const updateCoupon = async (id: string, updates: Partial<Coupon>) => {
+    if (isMongoConnected) {
+      try {
+        const updated = await api.updateCoupon(id, updates);
+        setCoupons((prev) => prev.map((c) => (c.id === id || c._id === id ? updated : c)));
+        showToast('Đã cập nhật mã giảm giá trong MongoDB', 'success');
+        return;
+      } catch (err: any) {
+        showToast(err.message, 'error');
+      }
+    }
     setCoupons((prev) => prev.map((c) => (c.id === id ? { ...c, ...updates } : c)));
     showToast('Đã cập nhật mã giảm giá', 'success');
   };
 
-  const deleteCoupon = (id: string) => {
-    setCoupons((prev) => prev.filter((c) => c.id !== id));
+  const deleteCoupon = async (id: string) => {
+    if (isMongoConnected) {
+      try {
+        await api.deleteCoupon(id);
+      } catch (err: any) {
+        console.error(err);
+      }
+    }
+    setCoupons((prev) => prev.filter((c) => c.id !== id && c._id !== id));
     showToast('Đã xóa mã giảm giá', 'info');
   };
 
   // Products CRUD
-  const addProduct = (productData: Omit<Product, 'id' | 'created_at' | 'rating' | 'reviews_count'>) => {
+  const addProduct = async (productData: Omit<Product, 'id' | 'created_at' | 'rating' | 'reviews_count'>) => {
+    if (isMongoConnected) {
+      try {
+        const created = await api.createProduct(productData);
+        setProducts((prev) => [created, ...prev]);
+        showToast(`Đã lưu sản phẩm "${created.name}" vào MongoDB!`, 'success');
+        return;
+      } catch (err: any) {
+        showToast(err.message, 'error');
+      }
+    }
     const newProduct: Product = {
       ...productData,
       id: `prod-${Date.now()}`,
@@ -316,25 +408,52 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     showToast(`Đã thêm sản phẩm "${newProduct.name}"`, 'success');
   };
 
-  const updateProduct = (id: string, updates: Partial<Product>) => {
+  const updateProduct = async (id: string, updates: Partial<Product>) => {
+    if (isMongoConnected) {
+      try {
+        const updated = await api.updateProduct(id, updates);
+        setProducts((prev) => prev.map((p) => (p.id === id || p._id === id ? updated : p)));
+        showToast('Đã cập nhật sản phẩm trong MongoDB', 'success');
+        return;
+      } catch (err: any) {
+        console.error(err);
+      }
+    }
     setProducts((prev) => prev.map((p) => (p.id === id ? { ...p, ...updates } : p)));
     showToast('Cập nhật sản phẩm thành công', 'success');
   };
 
-  const deleteProduct = (id: string) => {
-    setProducts((prev) => prev.filter((p) => p.id !== id));
+  const deleteProduct = async (id: string) => {
+    if (isMongoConnected) {
+      try {
+        await api.deleteProduct(id);
+      } catch (err: any) {
+        console.error(err);
+      }
+    }
+    setProducts((prev) => prev.filter((p) => p.id !== id && p._id !== id));
     showToast('Đã xóa sản phẩm', 'info');
   };
 
-  const toggleProductStatus = (id: string) => {
-    setProducts((prev) =>
-      prev.map((p) => (p.id === id ? { ...p, is_active: !p.is_active } : p))
-    );
-    showToast('Đã cập nhật trạng thái hiển thị của sản phẩm', 'success');
+  const toggleProductStatus = async (id: string) => {
+    const target = products.find((p) => p.id === id || p._id === id);
+    if (!target) return;
+    const nextStatus = !target.is_active;
+    await updateProduct(id, { is_active: nextStatus });
   };
 
   // Categories CRUD
-  const addCategory = (catData: Omit<Category, 'id'>) => {
+  const addCategory = async (catData: Omit<Category, 'id'>) => {
+    if (isMongoConnected) {
+      try {
+        const created = await api.createCategory(catData);
+        setCategories((prev) => [...prev, created]);
+        showToast(`Đã lưu danh mục "${created.name}" vào MongoDB!`, 'success');
+        return;
+      } catch (err: any) {
+        showToast(err.message, 'error');
+      }
+    }
     const newCat: Category = {
       ...catData,
       id: `cat-${Date.now()}`,
@@ -343,18 +462,35 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     showToast(`Đã tạo danh mục "${newCat.name}"`, 'success');
   };
 
-  const updateCategory = (id: string, updates: Partial<Category>) => {
+  const updateCategory = async (id: string, updates: Partial<Category>) => {
+    if (isMongoConnected) {
+      try {
+        const updated = await api.updateCategory(id, updates);
+        setCategories((prev) => prev.map((c) => (c.id === id || c._id === id ? updated : c)));
+        showToast('Đã cập nhật danh mục trong MongoDB', 'success');
+        return;
+      } catch (err: any) {
+        console.error(err);
+      }
+    }
     setCategories((prev) => prev.map((c) => (c.id === id ? { ...c, ...updates } : c)));
     showToast('Cập nhật danh mục thành công', 'success');
   };
 
-  const deleteCategory = (id: string) => {
-    setCategories((prev) => prev.filter((c) => c.id !== id));
+  const deleteCategory = async (id: string) => {
+    if (isMongoConnected) {
+      try {
+        await api.deleteCategory(id);
+      } catch (err: any) {
+        console.error(err);
+      }
+    }
+    setCategories((prev) => prev.filter((c) => c.id !== id && c._id !== id));
     showToast('Đã xóa danh mục', 'info');
   };
 
-  // Orders
-  const createOrder = ({
+  // Orders CRUD
+  const createOrder = async ({
     customerName,
     customerEmail,
     customerPhone,
@@ -368,12 +504,11 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     shippingAddress: string;
     paymentMethod: 'cod' | 'banking' | 'vnpay';
     note?: string;
-  }): Order => {
+  }): Promise<Order> => {
     const randomNum = Math.floor(10000 + Math.random() * 90000);
-    const newOrder: Order = {
-      id: `ord-${Date.now()}`,
+    const orderPayload = {
       order_code: `TD-${randomNum}`,
-      user_id: currentUser?.id || 'guest',
+      user_id: currentUser?.id || currentUser?._id || 'guest',
       user_name: customerName,
       user_email: customerEmail,
       user_phone: customerPhone,
@@ -384,8 +519,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       discount_amount: discountAmount,
       coupon_code: appliedCoupon?.code,
       total_amount: cartTotal,
-      status: 'pending',
-      created_at: new Date().toISOString(),
+      status: 'pending' as OrderStatus,
       items: cart.map((item) => ({
         id: `item-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
         product_id: item.product_id,
@@ -396,12 +530,27 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       })),
     };
 
+    let newOrder: Order;
+    if (isMongoConnected) {
+      try {
+        newOrder = await api.createOrder(orderPayload);
+      } catch {
+        newOrder = { ...orderPayload, id: `ord-${Date.now()}`, created_at: new Date().toISOString() };
+      }
+    } else {
+      newOrder = { ...orderPayload, id: `ord-${Date.now()}`, created_at: new Date().toISOString() };
+    }
+
     // Reduce stock
     setProducts((prev) =>
       prev.map((p) => {
-        const inCart = cart.find((c) => c.product_id === p.id);
+        const inCart = cart.find((c) => c.product_id === p.id || c.product_id === p._id);
         if (inCart) {
-          return { ...p, stock: Math.max(0, p.stock - inCart.quantity) };
+          const updatedStock = Math.max(0, p.stock - inCart.quantity);
+          if (isMongoConnected) {
+            api.updateProduct(p.id || p._id!, { stock: updatedStock }).catch(console.error);
+          }
+          return { ...p, stock: updatedStock };
         }
         return p;
       })
@@ -409,8 +558,12 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
     // Increment coupon used_count if applied
     if (appliedCoupon) {
+      const nextUsed = appliedCoupon.used_count + 1;
+      if (isMongoConnected) {
+        api.updateCoupon(appliedCoupon.id || appliedCoupon._id!, { used_count: nextUsed }).catch(console.error);
+      }
       setCoupons((prev) =>
-        prev.map((c) => (c.id === appliedCoupon.id ? { ...c, used_count: c.used_count + 1 } : c))
+        prev.map((c) => (c.id === appliedCoupon.id || c._id === appliedCoupon.id ? { ...c, used_count: nextUsed } : c))
       );
     }
 
@@ -420,18 +573,50 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return newOrder;
   };
 
-  const updateOrderStatus = (orderId: string, status: OrderStatus) => {
+  const updateOrderStatus = async (orderId: string, status: OrderStatus) => {
+    if (isMongoConnected) {
+      try {
+        const updated = await api.updateOrderStatus(orderId, status);
+        setOrders((prev) => prev.map((o) => (o.id === orderId || o._id === orderId ? updated : o)));
+        showToast('Đã cập nhật trạng thái đơn hàng trong MongoDB', 'success');
+        return;
+      } catch (err: any) {
+        console.error(err);
+      }
+    }
     setOrders((prev) => prev.map((o) => (o.id === orderId ? { ...o, status } : o)));
     showToast('Cập nhật trạng thái đơn hàng thành công', 'success');
   };
 
-  const deleteOrder = (orderId: string) => {
-    setOrders((prev) => prev.filter((o) => o.id !== orderId));
+  const deleteOrder = async (orderId: string) => {
+    if (isMongoConnected) {
+      try {
+        await api.deleteOrder(orderId);
+      } catch (err: any) {
+        console.error(err);
+      }
+    }
+    setOrders((prev) => prev.filter((o) => o.id !== orderId && o._id !== orderId));
     showToast('Đã xóa đơn hàng', 'info');
   };
 
   // Auth & Users
-  const login = (email: string, pass: string) => {
+  const login = async (email: string, pass: string) => {
+    if (isMongoConnected) {
+      try {
+        const res = await api.login(email, pass);
+        if (res.success && res.user) {
+          setCurrentUser(res.user);
+          setIsAuthModalOpen(false);
+          showToast(`Chào mừng ${res.user.full_name} quay trở lại!`, 'success');
+          return { success: true, message: 'Đăng nhập thành công' };
+        }
+      } catch (err: any) {
+        showToast(err.message || 'Đăng nhập thất bại', 'error');
+        return { success: false, message: err.message };
+      }
+    }
+
     const user = users.find((u) => u.email.toLowerCase() === email.trim().toLowerCase());
     if (!user) {
       showToast('Tài khoản không tồn tại trong hệ thống!', 'error');
@@ -451,7 +636,23 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return { success: true, message: 'Đăng nhập thành công' };
   };
 
-  const register = (userData: { full_name: string; email: string; phone: string; password?: string }) => {
+  const register = async (userData: { full_name: string; email: string; phone: string; password?: string }) => {
+    if (isMongoConnected) {
+      try {
+        const res = await api.register(userData);
+        if (res.success && res.user) {
+          setUsers((prev) => [res.user, ...prev]);
+          setCurrentUser(res.user);
+          setIsAuthModalOpen(false);
+          showToast('Đăng ký tài khoản MongoDB thành công!', 'success');
+          return { success: true, message: 'Đăng ký thành công' };
+        }
+      } catch (err: any) {
+        showToast(err.message || 'Đăng ký thất bại', 'error');
+        return { success: false, message: err.message };
+      }
+    }
+
     const existing = users.find((u) => u.email.toLowerCase() === userData.email.trim().toLowerCase());
     if (existing) {
       showToast('Email này đã được đăng ký tài khoản!', 'error');
@@ -485,8 +686,20 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     showToast('Đã đăng xuất tài khoản', 'info');
   };
 
-  const updateProfile = (updates: Partial<User>) => {
+  const updateProfile = async (updates: Partial<User>) => {
     if (!currentUser) return { success: false, message: 'Chưa đăng nhập' };
+    const id = currentUser.id || currentUser._id;
+    if (isMongoConnected && id) {
+      try {
+        const updated = await api.updateUser(id, updates);
+        setCurrentUser(updated);
+        setUsers((prev) => prev.map((u) => (u.id === id || u._id === id ? updated : u)));
+        showToast('Cập nhật thông tin cá nhân MongoDB thành công', 'success');
+        return { success: true, message: 'Cập nhật thành công' };
+      } catch (err: any) {
+        console.error(err);
+      }
+    }
     const updatedUser = { ...currentUser, ...updates };
     setCurrentUser(updatedUser);
     setUsers((prev) => prev.map((u) => (u.id === currentUser.id ? updatedUser : u)));
@@ -494,30 +707,63 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return { success: true, message: 'Cập nhật thành công' };
   };
 
-  const toggleUserLock = (userId: string) => {
+  const toggleUserLock = async (userId: string) => {
+    const target = users.find((u) => u.id === userId || u._id === userId);
+    if (!target) return;
+    const nextState = !target.is_active;
+    if (isMongoConnected) {
+      try {
+        const updated = await api.updateUser(userId, { is_active: nextState });
+        setUsers((prev) => prev.map((u) => (u.id === userId || u._id === userId ? updated : u)));
+        showToast('Cập nhật trạng thái tài khoản MongoDB thành công', 'success');
+        return;
+      } catch (err: any) {
+        console.error(err);
+      }
+    }
     setUsers((prev) =>
       prev.map((u) => (u.id === userId ? { ...u, is_active: !u.is_active } : u))
     );
     showToast('Cập nhật trạng thái tài khoản thành công', 'success');
   };
 
-  const deleteUser = (userId: string) => {
-    setUsers((prev) => prev.filter((u) => u.id !== userId));
+  const deleteUser = async (userId: string) => {
+    if (isMongoConnected) {
+      try {
+        await api.deleteUser(userId);
+      } catch (err: any) {
+        console.error(err);
+      }
+    }
+    setUsers((prev) => prev.filter((u) => u.id !== userId && u._id !== userId));
     showToast('Đã xóa người dùng', 'info');
   };
 
   // Reviews
-  const addReview = (productId: string, rating: number, comment: string) => {
-    const newRev: Review = {
-      id: `rev-${Date.now()}`,
+  const addReview = async (productId: string, rating: number, comment: string) => {
+    const revData = {
       product_id: productId,
       user_name: currentUser?.full_name || 'Khách hàng ẩn danh',
       user_avatar: currentUser?.avatar,
       rating,
       comment,
-      created_at: new Date().toISOString(),
     };
-    setReviews((prev) => [newRev, ...prev]);
+
+    if (isMongoConnected) {
+      try {
+        const created = await api.createReview(revData);
+        setReviews((prev) => [created, ...prev]);
+      } catch (err: any) {
+        console.error(err);
+      }
+    } else {
+      const newRev: Review = {
+        id: `rev-${Date.now()}`,
+        ...revData,
+        created_at: new Date().toISOString(),
+      };
+      setReviews((prev) => [newRev, ...prev]);
+    }
 
     // Update product rating
     const currentReviews = reviews.filter((r) => r.product_id === productId);
@@ -544,6 +790,10 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         setSearchQuery,
         activeOrderId,
         setActiveOrderId,
+        isMongoConnected,
+        isLoadingMongo,
+        refreshFromMongoDB,
+        reseedMongoDB,
         isAuthModalOpen,
         setIsAuthModalOpen,
         authModalMode,
